@@ -26,44 +26,9 @@ function extractJSON(text: string): any {
 
 // Helper to call OpenRouter
 async function callAI(messages: any[]) {
-    const apiKey = process.env.API_KEY;
-    
-    if (!apiKey) {
-        console.error("API Key is missing. Please ensure process.env.API_KEY is set.");
-        // Returning a mock response to prevent app crash if key is missing, 
-        // though in production this should throw/alert.
-        return null; 
-    }
-
-    try {
-        const response = await fetch(API_URL, {
-            method: "POST",
-            headers: {
-                "Authorization": `Bearer ${apiKey}`,
-                "HTTP-Referer": window.location.origin, // Required by OpenRouter
-                "X-Title": "resuAI", // Required by OpenRouter
-                "Content-Type": "application/json"
-            },
-            body: JSON.stringify({
-                model: "google/gemini-2.0-flash-001",
-                messages: messages,
-                temperature: 0.7,
-                top_p: 0.9,
-            })
-        });
-
-        if (!response.ok) {
-            const errorText = await response.text();
-            console.error(`AI API Error (${response.status}):`, errorText);
-            return null;
-        }
-
-        const data = await response.json();
-        return data.choices[0]?.message?.content || "";
-    } catch (error) {
-        console.error("AI Service Exception:", error);
-        return null;
-    }
+    // This should only be used on the server side
+    // Frontend should call API routes instead
+    throw new Error("This service should not be used on the frontend. Use aiService.ts instead.");
 }
 
 export const generateResumeSummary = async (jobTitle: string, experienceLevel: string): Promise<string> => {
