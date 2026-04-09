@@ -3,6 +3,12 @@ const cors = require('cors');
 const path = require('path');
 require('dotenv').config();
 
+// Add fetch polyfill for Node.js versions < 18
+if (!globalThis.fetch) {
+    const { default: fetch } = require('node-fetch');
+    globalThis.fetch = fetch;
+}
+
 const app = express();
 const PORT = process.env.PORT || 3001;
 
@@ -31,163 +37,43 @@ function extractJSON(text) {
     }
 }
 
-// Helper function to list available models
-async function listAvailableModels() {
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) return null;
-    
-    try {
-        // Try both v1beta and v1
-        const versions = ['v1beta', 'v1'];
-        for (const version of versions) {
-            try {
-                const url = `https://generativelanguage.googleapis.com/${version}/models?key=${apiKey}`;
-                const response = await fetch(url);
-                if (response.ok) {
-                    const data = await response.json();
-                    if (data.models && data.models.length > 0) {
-                        return { models: data.models, version };
-                    }
-                }
-            } catch (e) {
-                continue;
-            }
-        }
-    } catch (error) {
-        console.error("Error listing models:", error);
-    }
-    return null;
-}
-
-// Cache for available models
-let availableModelsCache = null;
-let cacheTimestamp = 0;
-const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
-
-// Get available models with caching
-async function getAvailableModels() {
-    const now = Date.now();
-    if (availableModelsCache && (now - cacheTimestamp) < CACHE_DURATION) {
-        return availableModelsCache;
-    }
-    
-    const result = await listAvailableModels();
-    if (result) {
-        availableModelsCache = result;
-        cacheTimestamp = now;
-    }
-    return result;
-}
-
-// Helper function to call Gemini API using Google Generative AI SDK
-async function callGeminiAPI(prompt, systemInstruction = null) {
-    const apiKey = process.env.GEMINI_API_KEY;
+// Helper function to call OpenRouter API instead of direct Gemini
+async function callOpenRouterAPI(messages) {
+    const apiKey = process.env.OPENROUTER_API_KEY;
     
     if (!apiKey) {
-        throw new Error("GEMINI_API_KEY is missing. Please set it in your .env file.");
+        throw new Error("OPENROUTER_API_KEY is missing. Please set it in your .env file.");
     }
 
-    // First, try to get available models
-    let availableModels = await getAvailableModels();
-    let modelNames = [];
-    
-    if (availableModels && availableModels.models) {
-        // Extract model names that support generateContent
-        const supportedModels = availableModels.models
-            .filter(m => {
-                const methods = m.supportedGenerationMethods || [];
-                return methods.includes('generateContent');
+    try {
+        const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+            method: "POST",
+            headers: {
+                "Authorization": `Bearer ${apiKey}`,
+                "HTTP-Referer": process.env.NEXTAUTH_URL || "http://localhost:3000",
+                "X-Title": "resuAI",
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+                model: "google/gemini-2.0-flash-001",
+                messages: messages,
+                temperature: 0.7,
+                top_p: 0.9,
             })
-            .map(m => {
-                // Extract just the model name (remove 'models/' prefix if present)
-                const name = m.name || '';
-                return name.replace(/^models\//, '');
-            });
-        
-        if (supportedModels.length > 0) {
-            modelNames = supportedModels;
-            console.log(`Found ${supportedModels.length} available model(s):`, supportedModels.join(', '));
-        }
-    }
-    
-    // Fallback to default models if we couldn't get the list
-    // Use newer models that are commonly available and work in most regions
-    if (modelNames.length === 0) {
-        console.log("Could not fetch available models, using default list");
-        const customModel = process.env.GEMINI_MODEL;
-        modelNames = [];
-        
-        // Add custom model first if set and not an old model
-        if (customModel && !customModel.includes('1.5') && !customModel.includes('1.0')) {
-            modelNames.push(customModel);
-        }
-        
-        // Add commonly available models (order matters - try most compatible first)
-        modelNames.push(
-            'gemini-flash-latest',      // Latest version, usually most compatible
-            'gemini-pro-latest',        // Latest pro version
-            'gemini-2.0-flash-001',     // Stable 2.0 version
-            'gemini-2.0-flash',         // 2.0 flash
-            'gemini-2.5-flash',         // 2.5 flash (may have location restrictions)
-            'gemini-2.5-pro'            // 2.5 pro (may have location restrictions)
-        );
-        
-        // Remove duplicates
-        modelNames = [...new Set(modelNames)];
-    }
+        });
 
-    let lastError = null;
-
-    for (const modelName of modelNames) {
-        try {
-            const genAI = new GoogleGenerativeAI(apiKey);
-            const modelConfig = { model: modelName };
-            
-            // Add system instruction if provided
-            if (systemInstruction) {
-                modelConfig.systemInstruction = systemInstruction;
-            }
-            
-            const model = genAI.getGenerativeModel(modelConfig);
-            const result = await model.generateContent(prompt);
-            const response = await result.response;
-            const text = response.text();
-            
-            if (text) {
-                console.log(`Successfully used model: ${modelName}`);
-                return text;
-            }
-        } catch (error) {
-            lastError = error;
-            const errorMessage = error.message || '';
-            const errorStatus = error.status || 0;
-            
-            console.error(`Error with model ${modelName}:`, errorMessage);
-            
-            // Check if it's a recoverable error (model not found, location restriction, etc.)
-            const isRecoverableError = 
-                errorMessage.includes('not found') || 
-                errorMessage.includes('404') || 
-                errorMessage.includes('NOT_FOUND') ||
-                errorMessage.includes('location is not supported') ||
-                errorMessage.includes('400 Bad Request') ||
-                errorStatus === 400 ||
-                errorStatus === 404;
-            
-            // If it's not a recoverable error, throw it immediately
-            if (!isRecoverableError) {
-                throw error; // Re-throw non-recoverable errors (like auth errors, quota, etc.)
-            }
-            continue; // Try next model for recoverable errors
+        if (!response.ok) {
+            const errorText = await response.text();
+            console.error(`OpenRouter API Error (${response.status}):`, errorText);
+            throw new Error(`OpenRouter API Error: ${response.status}`);
         }
-    }
 
-    // If all models failed, provide helpful error message
-    console.error("All model configurations failed");
-    const errorMsg = availableModels 
-        ? `None of the available models (${modelNames.join(', ')}) worked with your API key. Please check your API key permissions.`
-        : "Failed to call Gemini API. Could not determine available models. Please verify your API key is valid and has proper permissions.";
-    throw new Error(errorMsg);
+        const data = await response.json();
+        return data.choices[0]?.message?.content || "";
+    } catch (error) {
+        console.error("OpenRouter API Exception:", error);
+        throw error;
+    }
 }
 
 // API Routes
@@ -200,7 +86,7 @@ app.post('/api/generate-summary', async (req, res) => {
         }
 
         const prompt = `Write a professional, concise, and impactful resume summary (max 3-4 sentences) for a ${jobTitle} with ${experienceLevel} experience. Focus on achievements and unique value. Do not use placeholders.`;
-        const result = await callGeminiAPI(prompt);
+        const result = await callOpenRouterAPI([{ role: "user", content: prompt }]);
         
         const summary = result || "Experienced professional with a proven track record of success and a passion for driving results.";
 
@@ -224,7 +110,7 @@ app.post('/api/improve-text', async (req, res) => {
         }
 
         const prompt = `Rewrite the following resume bullet point to be professional, action-oriented, and ATS-friendly. Keep the core meaning but improve impact: "${text}"`;
-        const result = await callGeminiAPI(prompt);
+        const result = await callOpenRouterAPI([{ role: "user", content: prompt }]);
         
         const improvedText = result ? result.replace(/^"|"$/g, '') : text;
 
@@ -303,7 +189,10 @@ app.post('/api/generate-resume', async (req, res) => {
         `;
 
         const fullPrompt = `${systemPrompt}\n\n${userPrompt}`;
-        const result = await callGeminiAPI(fullPrompt);
+        const result = await callOpenRouterAPI([
+            { role: "system", content: systemPrompt },
+            { role: "user", content: userPrompt }
+        ]);
 
         if (!result) {
             return res.status(500).json({ error: 'Failed to generate resume content' });
@@ -609,39 +498,29 @@ app.get('/api/health', (req, res) => {
     res.json({ status: 'ok', message: 'API server is running' });
 });
 
-// Test endpoint to list available models
-app.get('/api/list-models', async (req, res) => {
+// Test endpoint to check OpenRouter connection
+app.get('/api/test-openrouter', async (req, res) => {
     try {
-        const result = await getAvailableModels();
-        if (result && result.models) {
-            const supportedModels = result.models
-                .filter(m => {
-                    const methods = m.supportedGenerationMethods || [];
-                    return methods.includes('generateContent');
-                })
-                .map(m => ({
-                    name: m.name?.replace(/^models\//, '') || m.name,
-                    displayName: m.displayName,
-                    description: m.description,
-                    methods: m.supportedGenerationMethods
-                }));
-            res.json({ 
-                success: true, 
-                apiVersion: result.version,
-                supportedModels: supportedModels,
-                allModels: result.models 
-            });
-        } else {
-            res.status(500).json({ error: 'Failed to list models. Check your API key and permissions.' });
-        }
+        const result = await callOpenRouterAPI([
+            { role: "user", content: "Say 'OpenRouter connection successful!'" }
+        ]);
+        res.json({ 
+            success: true, 
+            message: "OpenRouter API is working",
+            response: result
+        });
     } catch (error) {
-        res.status(500).json({ error: error.message });
+        res.status(500).json({ 
+            success: false,
+            error: error.message 
+        });
     }
 });
 
 app.listen(PORT, () => {
     console.log(`🚀 Server running on http://localhost:${PORT}`);
-    console.log(`📝 Make sure GEMINI_API_KEY is set in your .env file`);
+    console.log(`📝 Make sure OPENROUTER_API_KEY is set in your .env file`);
     console.log(`💾 Using in-memory storage (fake storage)`);
+    console.log(`🤖 Using OpenRouter API with Gemini model`);
 });
 
