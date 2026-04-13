@@ -91,7 +91,7 @@ const AIFormInputs = memo(({
         <div className="space-y-4">
             <div className="w-full">
                 <label className="block text-sm font-medium text-slate-700 mb-2">
-                    Target Job Title
+                    Target Job Title.
                 </label>
                 <input
                     ref={jobTitleRef}
