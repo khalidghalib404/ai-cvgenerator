@@ -121,7 +121,7 @@ const AIFormInputs = memo(({
                                 expLevelRef.current = level;
                                 setSelectedExpLevel(level);
                             }}
-                            className={`px-3 py-1.5 rounded-full text-xs font-medium border transition-colors ${selectedExpLevel === level ? 'bg-primary-600 text-white border-primary-600' : 'bg-white text-slate-600 border-slate-200 hover:border-primary-300'}`}
+                            className={`px-2 py-1.9 rounded-full text-xs font-medium border transition-colors ${selectedExpLevel === level ? 'bg-primary-600 text-white border-primary-600' : 'bg-white text-slate-600 border-slate-200 hover:border-primary-300'}`}
                         >
                             {level}
                         </button>
